@@ -99,6 +99,32 @@ func (m *MemStore) DeleteRelationship(_ context.Context, from, to, typ string) e
 	return nil
 }
 
+// DeleteRelationshipKeepingMin holds the same lock across the count and the delete,
+// so a second caller observing the count waits for the first to finish rather than
+// deciding against a total that is about to change.
+func (m *MemStore) DeleteRelationshipKeepingMin(_ context.Context, from, to, typ string, min int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var incoming int
+	for _, e := range m.edges {
+		if e.To == to && e.Type == typ {
+			incoming++
+		}
+	}
+	if incoming <= min {
+		return ErrCardinalityFloor
+	}
+	kept := m.edges[:0]
+	for _, e := range m.edges {
+		if e.From == from && e.To == to && e.Type == typ {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	m.edges = kept
+	return nil
+}
+
 func (m *MemStore) HasRelationship(_ context.Context, from, to, typ string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

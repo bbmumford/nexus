@@ -138,6 +138,32 @@ func (s *SQLStore) DeleteRelationship(ctx context.Context, from, to, typ string)
 	return err
 }
 
+// DeleteRelationshipKeepingMin counts and deletes inside one immediate transaction, so
+// a concurrent caller is serialised behind it rather than reading a total the commit is
+// about to invalidate. A writer that cannot take the lock fails with the driver's busy
+// error, which refuses the delete — the floor holds either way.
+func (s *SQLStore) DeleteRelationshipKeepingMin(ctx context.Context, from, to, typ string, min int) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var incoming int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM nexus_edges WHERE to_id = ? AND type = ?`, to, typ).Scan(&incoming); err != nil {
+		return err
+	}
+	if incoming <= min {
+		return ErrCardinalityFloor
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM nexus_edges WHERE from_id = ? AND to_id = ? AND type = ?`, from, to, typ); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *SQLStore) HasRelationship(ctx context.Context, from, to, typ string) (bool, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM nexus_edges WHERE from_id = ? AND to_id = ? AND type = ?`, from, to, typ).Scan(&n)
