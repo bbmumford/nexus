@@ -125,15 +125,20 @@ func (s *SQLStore) View(ctx context.Context, fn func(r GraphReader) error) error
 	return fn(sqlReader{q: tx})
 }
 
-// Update runs fn in one serializable transaction and commits when fn returns nil.
+// Update runs fn in one serializable transaction and commits when fn returns nil
+// and the writer holds no failed write (SQLTxWriter.do).
 func (s *SQLStore) Update(ctx context.Context, fn func(w TxWriter) error) error {
 	tx, err := s.begin(ctx, writeOptions)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := fn(&SQLTxWriter{sqlReader: sqlReader{q: tx}, tx: tx}); err != nil {
+	w := &SQLTxWriter{sqlReader: sqlReader{q: tx}, tx: tx}
+	if err := fn(w); err != nil {
 		return err
+	}
+	if w.err != nil {
+		return w.err
 	}
 	return tx.Commit()
 }
@@ -164,9 +169,33 @@ func (r sqlReader) InEdges(ctx context.Context, to string, types ...string) ([]R
 }
 
 // SQLTxWriter is the TxWriter SQLStore.Update hands its function.
+//
+// err holds the first write that failed after it may have changed the
+// transaction: deleteEntity runs two statements, and SQLite may roll a whole
+// transaction back on a statement error (a full disk, an I/O error, a busy lock),
+// after which further statements on the connection commit one at a time. Once err is set every later write answers it,
+// and Update returns it instead of committing even when fn returns nil, so a
+// function that drops a write's error cannot commit part of its writes.
 type SQLTxWriter struct {
 	sqlReader
-	tx *sql.Tx
+	tx  *sql.Tx
+	err error
+}
+
+// do runs one write unless an earlier one failed, and keeps its error unless it is
+// a refusal decided before anything was written: ErrNotFound (no entity row was
+// deleted), ErrCardinalityFloor (counted before the delete) or ErrInvalidSelector
+// (refused before any statement). A function may catch those and go on.
+func (w *SQLTxWriter) do(write func() error) error {
+	if w.err != nil {
+		return w.err
+	}
+	err := write()
+	if err != nil && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrCardinalityFloor) &&
+		!errors.Is(err, ErrInvalidSelector) {
+		w.err = err
+	}
+	return err
 }
 
 var _ TxWriter = (*SQLTxWriter)(nil)
@@ -177,27 +206,33 @@ var _ TxWriter = (*SQLTxWriter)(nil)
 func (w *SQLTxWriter) Tx() *sql.Tx { return w.tx }
 
 func (w *SQLTxWriter) PutEntity(ctx context.Context, e *Entity) error {
-	return putEntity(ctx, w.tx, e)
+	return w.do(func() error { return putEntity(ctx, w.tx, e) })
 }
 
 func (w *SQLTxWriter) DeleteEntity(ctx context.Context, id string) error {
-	return deleteEntity(ctx, w.tx, id)
+	return w.do(func() error { return deleteEntity(ctx, w.tx, id) })
 }
 
 func (w *SQLTxWriter) PutRelationship(ctx context.Context, r *Relationship) error {
-	return putRelationship(ctx, w.tx, r)
+	return w.do(func() error { return putRelationship(ctx, w.tx, r) })
 }
 
 func (w *SQLTxWriter) DeleteRelationship(ctx context.Context, from, to, typ string) error {
-	return deleteRelationship(ctx, w.tx, from, to, typ)
+	return w.do(func() error { return deleteRelationship(ctx, w.tx, from, to, typ) })
 }
 
 func (w *SQLTxWriter) DeleteRelationshipKeepingMin(ctx context.Context, from, to, typ string, min int) error {
-	return deleteKeepingMin(ctx, w.tx, from, to, typ, min)
+	return w.do(func() error { return deleteKeepingMin(ctx, w.tx, from, to, typ, min) })
 }
 
 func (w *SQLTxWriter) DeleteEdgesWhere(ctx context.Context, sel EdgeSelector) ([]EdgeKey, error) {
-	return deleteEdgesWhere(ctx, w.tx, sel)
+	var keys []EdgeKey
+	err := w.do(func() error {
+		var err error
+		keys, err = deleteEdgesWhere(ctx, w.tx, sel)
+		return err
+	})
+	return keys, err
 }
 
 // ── Entities ──

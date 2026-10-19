@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"unicode/utf8"
 )
 
 // ErrNotFound is returned by GetEntity for an unknown id.
@@ -88,9 +89,11 @@ type TxWriter interface {
 //
 // View runs fn over one read-only snapshot: a write committed by anyone after the
 // snapshot is taken is not seen by any read fn makes. Update runs fn in one
-// serializable transaction and commits only when fn returns nil; any error, or a
-// panic, rolls every write back. Both answer ErrNoTransaction when the connector
-// cannot give that transaction.
+// serializable transaction and commits only when fn returns nil and no write in it
+// failed other than by a refusal decided before writing (ErrNotFound,
+// ErrCardinalityFloor, ErrInvalidSelector); any other error, returned or dropped by
+// fn, or a panic, rolls every write back. Both answer ErrNoTransaction when the
+// connector cannot give that transaction.
 //
 // A write on the store itself from inside fn is a second writer: it waits for the
 // transaction fn runs in, as a second connection does.
@@ -120,14 +123,20 @@ type EdgeSelector struct {
 }
 
 // validate refuses a selector that names neither or both endpoints, no type, or an
-// attribute key the SQL store's JSON path cannot quote: a key carrying a double
-// quote would end the quoted path label it is placed in.
+// attribute the SQL store would match differently from MemStore, so both stores
+// remove the same set or both refuse:
+//   - a key carrying a double quote or a backslash: selectorWhere places the key in
+//     a quoted JSON path label, where a quote ends the label and SQLite reads a
+//     backslash as an escape, so `ab` would select the attribute "ab";
+//   - a key or value that is not valid UTF-8: marshalAttrs stores attributes as JSON,
+//     which replaces such bytes, so json_extract never equals the bytes MemStore
+//     compares.
 func (sel EdgeSelector) validate() error {
 	if (sel.From == "") == (sel.To == "") || sel.Type == "" {
 		return ErrInvalidSelector
 	}
-	for k := range sel.Attrs {
-		if k == "" || strings.ContainsRune(k, '"') {
+	for k, v := range sel.Attrs {
+		if k == "" || strings.ContainsAny(k, `"\`) || !utf8.ValidString(k) || !utf8.ValidString(v) {
 			return ErrInvalidSelector
 		}
 	}
