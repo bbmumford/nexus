@@ -42,21 +42,21 @@ type querier interface {
 // InitSchema creates the entity/edge tables + indexes (idempotent); run once at boot.
 func (s *SQLStore) InitSchema(ctx context.Context) error {
 	stmts := []string{
-		`CREATE TABLE IF NOT EXISTS nexus_entities (
+		`CREATE TABLE IF NOT EXISTS nexusEntities (
 			id TEXT PRIMARY KEY,
 			type TEXT NOT NULL DEFAULT '',
 			attrs TEXT NOT NULL DEFAULT '{}'
 		)`,
-		`CREATE INDEX IF NOT EXISTS idx_nexus_entities_type ON nexus_entities(type)`,
-		`CREATE TABLE IF NOT EXISTS nexus_edges (
-			from_id TEXT NOT NULL,
-			to_id TEXT NOT NULL,
+		`CREATE INDEX IF NOT EXISTS idxNexusEntitiesType ON nexusEntities(type)`,
+		`CREATE TABLE IF NOT EXISTS nexusEdges (
+			fromId TEXT NOT NULL,
+			toId TEXT NOT NULL,
 			type TEXT NOT NULL,
 			attrs TEXT NOT NULL DEFAULT '{}',
-			PRIMARY KEY (from_id, to_id, type)
+			PRIMARY KEY (fromId, toId, type)
 		)`,
-		`CREATE INDEX IF NOT EXISTS idx_nexus_edges_from ON nexus_edges(from_id, type)`,
-		`CREATE INDEX IF NOT EXISTS idx_nexus_edges_to ON nexus_edges(to_id, type)`,
+		`CREATE INDEX IF NOT EXISTS idxNexusEdgesFrom ON nexusEdges(fromId, type)`,
+		`CREATE INDEX IF NOT EXISTS idxNexusEdgesTo ON nexusEdges(toId, type)`,
 	}
 	for _, q := range stmts {
 		if _, err := s.db.ExecContext(ctx, q); err != nil {
@@ -173,12 +173,12 @@ func (r sqlReader) HasRelationship(ctx context.Context, from, to, typ string) (b
 }
 
 func (r sqlReader) OutEdges(ctx context.Context, from string, types ...string) ([]Relationship, error) {
-	q, args := edgeQuery("from_id", from, types)
+	q, args := edgeQuery("fromId", from, types)
 	return scanEdges(ctx, r.q, q, args)
 }
 
 func (r sqlReader) InEdges(ctx context.Context, to string, types ...string) ([]Relationship, error) {
-	q, args := edgeQuery("to_id", to, types)
+	q, args := edgeQuery("toId", to, types)
 	return scanEdges(ctx, r.q, q, args)
 }
 
@@ -255,7 +255,7 @@ func (s *SQLStore) PutEntity(ctx context.Context, e *Entity) error { return putE
 
 func putEntity(ctx context.Context, q querier, e *Entity) error {
 	_, err := q.ExecContext(ctx, `
-		INSERT INTO nexus_entities (id, type, attrs) VALUES (?, ?, ?)
+		INSERT INTO nexusEntities (id, type, attrs) VALUES (?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET type = excluded.type, attrs = excluded.attrs`,
 		e.ID, e.Type, marshalAttrs(e.Attrs))
 	return err
@@ -268,7 +268,7 @@ func (s *SQLStore) GetEntity(ctx context.Context, id string) (*Entity, error) {
 func getEntity(ctx context.Context, q querier, id string) (*Entity, error) {
 	var e Entity
 	var attrs string
-	err := q.QueryRowContext(ctx, `SELECT id, type, attrs FROM nexus_entities WHERE id = ?`, id).Scan(&e.ID, &e.Type, &attrs)
+	err := q.QueryRowContext(ctx, `SELECT id, type, attrs FROM nexusEntities WHERE id = ?`, id).Scan(&e.ID, &e.Type, &attrs)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -294,14 +294,14 @@ func (s *SQLStore) DeleteEntity(ctx context.Context, id string) error {
 }
 
 func deleteEntity(ctx context.Context, q querier, id string) error {
-	res, err := q.ExecContext(ctx, `DELETE FROM nexus_entities WHERE id = ?`, id)
+	res, err := q.ExecContext(ctx, `DELETE FROM nexusEntities WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
 	}
-	_, err = q.ExecContext(ctx, `DELETE FROM nexus_edges WHERE from_id = ? OR to_id = ?`, id, id)
+	_, err = q.ExecContext(ctx, `DELETE FROM nexusEdges WHERE fromId = ? OR toId = ?`, id, id)
 	return err
 }
 
@@ -310,7 +310,7 @@ func (s *SQLStore) ListEntitiesByType(ctx context.Context, typ string) ([]Entity
 }
 
 func listEntitiesByType(ctx context.Context, q querier, typ string) ([]Entity, error) {
-	rows, err := q.QueryContext(ctx, `SELECT id, type, attrs FROM nexus_entities WHERE type = ? ORDER BY id ASC`, typ)
+	rows, err := q.QueryContext(ctx, `SELECT id, type, attrs FROM nexusEntities WHERE type = ? ORDER BY id ASC`, typ)
 	if err != nil {
 		return nil, err
 	}
@@ -336,8 +336,8 @@ func (s *SQLStore) PutRelationship(ctx context.Context, r *Relationship) error {
 
 func putRelationship(ctx context.Context, q querier, r *Relationship) error {
 	_, err := q.ExecContext(ctx, `
-		INSERT INTO nexus_edges (from_id, to_id, type, attrs) VALUES (?, ?, ?, ?)
-		ON CONFLICT(from_id, to_id, type) DO UPDATE SET attrs = excluded.attrs`,
+		INSERT INTO nexusEdges (fromId, toId, type, attrs) VALUES (?, ?, ?, ?)
+		ON CONFLICT(fromId, toId, type) DO UPDATE SET attrs = excluded.attrs`,
 		r.From, r.To, r.Type, marshalAttrs(r.Attrs))
 	return err
 }
@@ -347,7 +347,7 @@ func (s *SQLStore) DeleteRelationship(ctx context.Context, from, to, typ string)
 }
 
 func deleteRelationship(ctx context.Context, q querier, from, to, typ string) error {
-	_, err := q.ExecContext(ctx, `DELETE FROM nexus_edges WHERE from_id = ? AND to_id = ? AND type = ?`, from, to, typ)
+	_, err := q.ExecContext(ctx, `DELETE FROM nexusEdges WHERE fromId = ? AND toId = ? AND type = ?`, from, to, typ)
 	return err
 }
 
@@ -370,7 +370,7 @@ func (s *SQLStore) DeleteRelationshipKeepingMin(ctx context.Context, from, to, t
 func deleteKeepingMin(ctx context.Context, q querier, from, to, typ string, min int) error {
 	var incoming int
 	if err := q.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM nexus_edges WHERE to_id = ? AND type = ?`, to, typ).Scan(&incoming); err != nil {
+		`SELECT COUNT(*) FROM nexusEdges WHERE toId = ? AND type = ?`, to, typ).Scan(&incoming); err != nil {
 		return err
 	}
 	if incoming <= min {
@@ -389,7 +389,7 @@ func deleteEdgesWhere(ctx context.Context, q querier, sel EdgeSelector) ([]EdgeK
 	}
 	where, args := selectorWhere(sel)
 	rows, err := q.QueryContext(ctx,
-		`SELECT from_id, to_id, type FROM nexus_edges WHERE `+where+` ORDER BY from_id, to_id, type`, args...)
+		`SELECT fromId, toId, type FROM nexusEdges WHERE `+where+` ORDER BY fromId, toId, type`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -411,7 +411,7 @@ func deleteEdgesWhere(ctx context.Context, q querier, sel EdgeSelector) ([]EdgeK
 	if len(keys) == 0 {
 		return nil, nil
 	}
-	if _, err := q.ExecContext(ctx, `DELETE FROM nexus_edges WHERE `+where, args...); err != nil {
+	if _, err := q.ExecContext(ctx, `DELETE FROM nexusEdges WHERE `+where, args...); err != nil {
 		return nil, err
 	}
 	return keys, nil
@@ -420,9 +420,9 @@ func deleteEdgesWhere(ctx context.Context, q querier, sel EdgeSelector) ([]EdgeK
 // selectorWhere renders sel as a WHERE clause and its arguments. Attribute keys go
 // in as bound JSON paths, in sorted order so the statement text is stable.
 func selectorWhere(sel EdgeSelector) (string, []any) {
-	col, id := "from_id", sel.From
+	col, id := "fromId", sel.From
 	if sel.To != "" {
-		col, id = "to_id", sel.To
+		col, id = "toId", sel.To
 	}
 	where := col + ` = ? AND type = ?`
 	args := []any{id, sel.Type}
@@ -448,13 +448,13 @@ func (s *SQLStore) HasRelationship(ctx context.Context, from, to, typ string) (b
 
 func hasRelationship(ctx context.Context, q querier, from, to, typ string) (bool, error) {
 	var n int
-	err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM nexus_edges WHERE from_id = ? AND to_id = ? AND type = ?`, from, to, typ).Scan(&n)
+	err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM nexusEdges WHERE fromId = ? AND toId = ? AND type = ?`, from, to, typ).Scan(&n)
 	return n > 0, err
 }
 
 // edgeQuery builds a `col = ?` [+ AND type IN (?,...)] filter and its args.
 func edgeQuery(col, id string, types []string) (string, []any) {
-	q := `SELECT from_id, to_id, type, attrs FROM nexus_edges WHERE ` + col + ` = ?`
+	q := `SELECT fromId, toId, type, attrs FROM nexusEdges WHERE ` + col + ` = ?`
 	args := []any{id}
 	if len(types) > 0 {
 		q += ` AND type IN (` + strings.TrimSuffix(strings.Repeat("?,", len(types)), ",") + `)`

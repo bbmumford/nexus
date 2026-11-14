@@ -13,7 +13,7 @@ func TestUpdate_ADroppedWriteErrorStillRollsBack(t *testing.T) {
 	s := fileSQLStore(t)
 	_ = s.PutEntity(ctx, &Entity{ID: "r1", Type: "role"})
 	mustPut(t, s, Relationship{From: "s1", To: "r1", Type: "assigned"})
-	if _, err := s.DB().ExecContext(ctx, `CREATE TRIGGER refuse_edge_delete BEFORE DELETE ON nexus_edges
+	if _, err := s.DB().ExecContext(ctx, `CREATE TRIGGER refuseEdgeDelete BEFORE DELETE ON nexusEdges
 		BEGIN SELECT RAISE(ABORT, 'edge delete refused'); END`); err != nil {
 		t.Fatal(err)
 	}
