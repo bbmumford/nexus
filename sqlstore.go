@@ -115,15 +115,29 @@ func (s *SQLStore) begin(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, err
 var writeOptions = &sql.TxOptions{Isolation: sql.LevelSerializable}
 
 // View runs fn over one read-only transaction and always rolls it back, so nothing
-// fn reaches can be written through it.
+// fn reaches can be written through it. The reader fn receives is a *SQLTxReader.
 func (s *SQLStore) View(ctx context.Context, fn func(r GraphReader) error) error {
 	tx, err := s.begin(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	return fn(sqlReader{q: tx})
+	return fn(&SQLTxReader{sqlReader: sqlReader{q: tx}, tx: tx})
 }
+
+// SQLTxReader is the GraphReader SQLStore.View hands its function.
+type SQLTxReader struct {
+	sqlReader
+	tx *sql.Tx
+}
+
+var _ GraphReader = (*SQLTxReader)(nil)
+
+// Tx returns the read-only transaction the reader runs in, so a table on the same
+// database (census.ViewSQLTx's consumers) is read at the snapshot the edges are
+// read at. View owns the transaction and rolls it back when fn returns, so nothing
+// written through it is kept: a caller never commits or rolls it back.
+func (r *SQLTxReader) Tx() *sql.Tx { return r.tx }
 
 // Update runs fn in one serializable transaction and commits when fn returns nil
 // and the writer holds no failed write (SQLTxWriter.do).
