@@ -33,27 +33,13 @@ type Rule func(ctx context.Context, g GraphStore, subject string) (values []stri
 // yielding a value -> unresolved (Resolved=false, Ambiguous=false). Any rule error fails the whole
 // resolution closed.
 func Resolve(ctx context.Context, g GraphStore, subject string, rules ...Rule) (Resolution, error) {
-	var res Resolution
-	decided := false
-	for _, rule := range rules {
-		vals, via, err := rule(ctx, g, subject)
-		if err != nil {
-			return Resolution{}, err
-		}
-		vals = dedupe(vals)
-		for _, v := range vals {
-			res.Candidates = append(res.Candidates, Candidate{Value: v, Via: via})
-		}
-		if !decided && len(vals) > 0 {
-			decided = true
-			if len(vals) == 1 {
-				res.Value, res.Via, res.Resolved = vals[0], via, true
-			} else {
-				res.Ambiguous = true
-			}
+	read := make([]ReadRule, len(rules))
+	for i, rule := range rules {
+		read[i] = func(ctx context.Context, _ GraphReader, subject string) ([]string, string, error) {
+			return rule(ctx, g, subject)
 		}
 	}
-	return res, nil
+	return ResolveIn(ctx, g, subject, read...)
 }
 
 // OutTargets is the simplest rung: the To-entity-ids of the subject's out-edges of edgeType
