@@ -15,7 +15,11 @@ func newSQLStore(t *testing.T) *SQLStore {
 		t.Fatal(err)
 	}
 	db.SetMaxOpenConns(1) // keep the :memory: DB on one connection
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("db.Close: %v", err)
+		}
+	})
 	s := NewSQLStore(db)
 	if err := s.InitSchema(ctx); err != nil {
 		t.Fatalf("InitSchema: %v", err)
@@ -51,7 +55,9 @@ func seedSample(t *testing.T, g GraphStore) {
 
 func TestSQLStore_EntityEdgeRoundTripAndFilter(t *testing.T) {
 	s := newSQLStore(t)
-	s.PutEntity(ctx, &Entity{ID: "u1", Type: "user", Attrs: map[string]string{"email": "a@x"}})
+	if err := s.PutEntity(ctx, &Entity{ID: "u1", Type: "user", Attrs: map[string]string{"email": "a@x"}}); err != nil {
+		t.Fatalf("s.PutEntity: %v", err)
+	}
 	got, err := s.GetEntity(ctx, "u1")
 	if err != nil || got.Type != "user" || got.Attrs["email"] != "a@x" {
 		t.Fatalf("entity round-trip incl attrs: %+v %v", got, err)
@@ -59,8 +65,12 @@ func TestSQLStore_EntityEdgeRoundTripAndFilter(t *testing.T) {
 	if _, err := s.GetEntity(ctx, "nope"); !errors.Is(err, ErrNotFound) {
 		t.Fatal("unknown entity must be ErrNotFound")
 	}
-	s.PutRelationship(ctx, &Relationship{From: "u1", To: "o1", Type: "member"})
-	s.PutRelationship(ctx, &Relationship{From: "u1", To: "t1", Type: "lead"})
+	if err := s.PutRelationship(ctx, &Relationship{From: "u1", To: "o1", Type: "member"}); err != nil {
+		t.Fatalf("s.PutRelationship: %v", err)
+	}
+	if err := s.PutRelationship(ctx, &Relationship{From: "u1", To: "t1", Type: "lead"}); err != nil {
+		t.Fatalf("s.PutRelationship: %v", err)
+	}
 	// OutEdges type filter
 	if got, _ := s.OutEdges(ctx, "u1", "member"); len(got) != 1 || got[0].To != "o1" {
 		t.Fatalf("OutEdges type filter: %+v", got)

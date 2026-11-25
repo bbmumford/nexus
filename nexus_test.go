@@ -18,7 +18,9 @@ func sampleGraph(t *testing.T) *MemStore {
 		{ID: "team-x", Type: "team"}, {ID: "project-p", Type: "project"}, {ID: "org-o", Type: "org"},
 	} {
 		e := e
-		m.PutEntity(ctx, &e)
+		if err := m.PutEntity(ctx, &e); err != nil {
+			t.Fatalf("m.PutEntity: %v", err)
+		}
 	}
 	edges := []Relationship{
 		{From: "alice", To: "team-x", Type: "member"},
@@ -29,14 +31,18 @@ func sampleGraph(t *testing.T) *MemStore {
 	}
 	for _, r := range edges {
 		r := r
-		m.PutRelationship(ctx, &r)
+		if err := m.PutRelationship(ctx, &r); err != nil {
+			t.Fatalf("m.PutRelationship: %v", err)
+		}
 	}
 	return m
 }
 
 func TestEntityAndEdgeRoundTrip(t *testing.T) {
 	m := NewMemStore()
-	m.PutEntity(ctx, &Entity{ID: "u1", Type: "user", Attrs: map[string]string{"email": "a@x"}})
+	if err := m.PutEntity(ctx, &Entity{ID: "u1", Type: "user", Attrs: map[string]string{"email": "a@x"}}); err != nil {
+		t.Fatalf("m.PutEntity: %v", err)
+	}
 	got, err := m.GetEntity(ctx, "u1")
 	if err != nil || got.Type != "user" || got.Attrs["email"] != "a@x" {
 		t.Fatalf("entity round-trip: %+v %v", got, err)
@@ -44,12 +50,16 @@ func TestEntityAndEdgeRoundTrip(t *testing.T) {
 	if _, err := m.GetEntity(ctx, "nope"); !errors.Is(err, ErrNotFound) {
 		t.Fatal("unknown entity must be ErrNotFound")
 	}
-	m.PutRelationship(ctx, &Relationship{From: "u1", To: "o1", Type: "member"})
+	if err := m.PutRelationship(ctx, &Relationship{From: "u1", To: "o1", Type: "member"}); err != nil {
+		t.Fatalf("m.PutRelationship: %v", err)
+	}
 	if ok, _ := m.HasRelationship(ctx, "u1", "o1", "member"); !ok {
 		t.Fatal("edge must exist")
 	}
 	// deleting an entity removes incident edges
-	m.DeleteEntity(ctx, "u1")
+	if err := m.DeleteEntity(ctx, "u1"); err != nil {
+		t.Fatalf("m.DeleteEntity: %v", err)
+	}
 	if ok, _ := m.HasRelationship(ctx, "u1", "o1", "member"); ok {
 		t.Fatal("deleting an entity must remove its edges")
 	}
@@ -98,10 +108,16 @@ func TestResolve_FallbackThroughArbitraryPath(t *testing.T) {
 
 func TestResolve_AmbiguousFirstRung(t *testing.T) {
 	m := NewMemStore()
-	m.PutEntity(ctx, &Entity{ID: "p", Type: "project"})
+	if err := m.PutEntity(ctx, &Entity{ID: "p", Type: "project"}); err != nil {
+		t.Fatalf("m.PutEntity: %v", err)
+	}
 	// two direct owners → ambiguous, not "pick first".
-	m.PutRelationship(ctx, &Relationship{From: "p", To: "bob", Type: "owner"})
-	m.PutRelationship(ctx, &Relationship{From: "p", To: "carol", Type: "owner"})
+	if err := m.PutRelationship(ctx, &Relationship{From: "p", To: "bob", Type: "owner"}); err != nil {
+		t.Fatalf("m.PutRelationship: %v", err)
+	}
+	if err := m.PutRelationship(ctx, &Relationship{From: "p", To: "carol", Type: "owner"}); err != nil {
+		t.Fatalf("m.PutRelationship: %v", err)
+	}
 	res, err := Resolve(ctx, m, "p", OutTargets("owner"))
 	if err != nil {
 		t.Fatal(err)

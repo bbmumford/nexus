@@ -314,7 +314,7 @@ func listEntitiesByType(ctx context.Context, q querier, typ string) ([]Entity, e
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer closeRows(rows)
 	var out []Entity
 	for rows.Next() {
 		var e Entity
@@ -397,7 +397,7 @@ func deleteEdgesWhere(ctx context.Context, q querier, sel EdgeSelector) ([]EdgeK
 	for rows.Next() {
 		var k EdgeKey
 		if err := rows.Scan(&k.From, &k.To, &k.Type); err != nil {
-			rows.Close()
+			closeRows(rows)
 			return nil, err
 		}
 		keys = append(keys, k)
@@ -470,7 +470,7 @@ func scanEdges(ctx context.Context, qr querier, q string, args []any) ([]Relatio
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer closeRows(rows)
 	var out []Relationship
 	for rows.Next() {
 		var r Relationship
@@ -491,3 +491,9 @@ func (s *SQLStore) OutEdges(ctx context.Context, from string, types ...string) (
 func (s *SQLStore) InEdges(ctx context.Context, to string, types ...string) ([]Relationship, error) {
 	return sqlReader{q: s.db}.InEdges(ctx, to, types...)
 }
+
+// closeRows is the deferred Close of every query's rows in this package.
+// database/sql closes rows itself once Next reports the end, so a normal return
+// leaves nothing to close, and an early return already carries the error that
+// stopped the read; its result is dropped.
+func closeRows(rows *sql.Rows) { _ = rows.Close() }
